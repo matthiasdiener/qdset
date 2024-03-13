@@ -33,30 +33,87 @@ Invariants for frozensets:
 
 */
 
-typedef struct {
-    PyObject_HEAD
+// typedef struct
+// {
+//     PyObject_HEAD
+//     Py_ssize_t fill; /* Number active and dummy entries*/
+//     Py_ssize_t used;    /* Number active entries */
 
-    Py_ssize_t fill;            /* Number active and dummy entries*/
-    Py_ssize_t used;            /* Number active entries */
+//     /* The table contains mask + 1 slots, and that's a power of 2.
+//      * We store the mask instead of the size because the mask is more
+//      * frequently needed.
+//      */
+//     Py_ssize_t mask;
 
-    /* The table contains mask + 1 slots, and that's a power of 2.
-     * We store the mask instead of the size because the mask is more
-     * frequently needed.
-     */
-    Py_ssize_t mask;
+//     /* The table points to a fixed-size smalltable for small tables
+//      * or to additional malloc'ed memory for bigger tables.
+//      * The table pointer is never NULL which saves us from repeated
+//      * runtime null-tests.
+//      */
+//     qdsetentry *table;
+//     Py_hash_t hash;    /* Only used by frozenset objects */
+//     Py_ssize_t finger; /* Search finger for pop() */
 
-    /* The table points to a fixed-size smalltable for small tables
-     * or to additional malloc'ed memory for bigger tables.
-     * The table pointer is never NULL which saves us from repeated
-     * runtime null-tests.
-     */
+//     qdsetentry smalltable[PySet_MINSIZE];
+//     PyObject *weakreflist; /* List of weak references */
+// } QdPySetObject;
+
+typedef struct
+{
+    Py_ssize_t dk_refcnt;
+
+    /* Size of the hash table (dk_indices). It must be a power of 2. */
+    uint8_t dk_log2_size;
+
+    /* Size of the hash table (dk_indices) by bytes. */
+    uint8_t dk_log2_index_bytes;
+
+    /* Kind of keys */
+    uint8_t dk_kind;
+
+    /* Version number -- Reset to 0 by any modification to keys */
+    uint32_t dk_version;
+
+    /* Number of usable entries in dk_entries. */
+    Py_ssize_t dk_usable;
+
+    /* Number of used entries in dk_entries. */
+    Py_ssize_t used;
+
+    // ADDED
     qdsetentry *table;
-    Py_hash_t hash;             /* Only used by frozenset objects */
-    Py_ssize_t finger;          /* Search finger for pop() */
+    Py_hash_t hash; /* Only used by frozenset objects */
 
-    qdsetentry smalltable[PySet_MINSIZE];
-    PyObject *weakreflist;      /* List of weak references */
+    /* Actual hash table of dk_size entries. It holds indices in dk_entries,
+        or DKIX_EMPTY(-1) or DKIX_DUMMY(-2).
+
+        Indices must be: 0 <= indice < USABLE_FRACTION(dk_size).
+
+        The size in bytes of an indice depends on dk_size:
+
+        - 1 byte if dk_size <= 0xff (char*)
+        - 2 bytes if dk_size <= 0xffff (int16_t*)
+        - 4 bytes if dk_size <= 0xffffffff (int32_t*)
+        - 8 bytes otherwise (int64_t*)
+
+        Dynamically sized, SIZEOF_VOID_P is minimum. */
+    char dk_indices[]; /* char is required to avoid strict aliasing. */
+
+
+    /* "PyDictKeyEntry or PyDictUnicodeEntry dk_entries[USABLE_FRACTION(DK_SIZE(dk))];" array follows:
+        see the DK_ENTRIES() macro */
 } QdPySetObject;
+
+#define DK_LOG_SIZE(dk) ((dk)->dk_log2_size)
+#if SIZEOF_VOID_P > 4
+#define DK_SIZE(dk) (((int64_t)1) << DK_LOG_SIZE(dk))
+#else
+#define DK_SIZE(dk) (1 << DK_LOG_SIZE(dk))
+#endif
+#define DK_ENTRIES(dk) \
+    (qdsetentry *)(&((int8_t *)((dk)->dk_indices))[(size_t)1 << (dk)->dk_log2_index_bytes])
+
+#define DK_MASK(dk) (DK_SIZE(dk) - 1)
 
 #define PySet_GET_SIZE(so) \
     (assert(PyAnySet_Check(so)), (((PySetObject *)(so))->used))

@@ -58,14 +58,14 @@ set_lookkey(QdPySetObject *so, PyObject *key, Py_hash_t hash)
     qdsetentry *table;
     qdsetentry *entry;
     size_t perturb = hash;
-    size_t mask = so->mask;
+    size_t mask = DK_MASK(so);
     size_t i = (size_t)hash & mask; /* Unsigned for defined overflow behavior */
     int probes;
     int cmp;
 
     while (1)
     {
-        entry = &so->table[i];
+        entry = DK_ENTRIES(so)[i];
         probes = (i + LINEAR_PROBES <= mask) ? LINEAR_PROBES : 0;
         do
         {
@@ -89,7 +89,7 @@ set_lookkey(QdPySetObject *so, PyObject *key, Py_hash_t hash)
                     return set_lookkey(so, key, hash);
                 if (cmp > 0)
                     return entry;
-                mask = so->mask;
+                mask = DK_MASK(so);
             }
             entry++;
         } while (probes--);
@@ -118,7 +118,7 @@ set_add_entry(QdPySetObject *so, PyObject *key, Py_hash_t hash)
 
 restart:
 
-    mask = so->mask;
+    mask = DK_MASK(so);
     i = (size_t)hash & mask;
     freeslot = NULL;
     perturb = hash;
@@ -149,7 +149,7 @@ restart:
                     goto comparison_error;
                 if (table != so->table || entry->key != startkey)
                     goto restart;
-                mask = so->mask;
+                mask = DK_MASK(so);
             }
             else if (entry->hash == -1)
             {
@@ -171,11 +171,11 @@ found_unused_or_dummy:
     return 0;
 
 found_unused:
-    so->fill++;
+    so->dk_usable++;
     so->used++;
     entry->key = key;
     entry->hash = hash;
-    if ((size_t)so->fill * 5 < mask * 3)
+    if ((size_t)so->dk_usable * 5 < mask * 3)
         return 0;
     return set_table_resize(so, so->used > 50000 ? so->used * 2 : so->used * 4);
 
@@ -238,10 +238,10 @@ static int
 set_table_resize(QdPySetObject *so, Py_ssize_t minused)
 {
     qdsetentry *oldtable, *newtable, *entry;
-    Py_ssize_t oldmask = so->mask;
+    Py_ssize_t oldmask = DK_MASK(so);
     size_t newmask;
     int is_oldtable_malloced;
-    qdsetentry small_copy[PySet_MINSIZE];
+    // qdsetentry small_copy[PySet_MINSIZE];
 
     assert(minused >= 0);
 
@@ -256,31 +256,31 @@ set_table_resize(QdPySetObject *so, Py_ssize_t minused)
     /* Get space for a new table. */
     oldtable = so->table;
     assert(oldtable != NULL);
-    is_oldtable_malloced = oldtable != so->smalltable;
+    is_oldtable_malloced = 1; //oldtable != so->smalltable;
 
-    if (newsize == PySet_MINSIZE)
-    {
-        /* A large table is shrinking, or we can't get any smaller. */
-        newtable = so->smalltable;
-        if (newtable == oldtable)
-        {
-            if (so->fill == so->used)
-            {
-                /* No dummies, so no point doing anything. */
-                return 0;
-            }
-            /* We're not going to resize it, but rebuild the
-               table anyway to purge old dummy entries.
-               Subtle:  This is *necessary* if fill==size,
-               as set_lookkey needs at least one virgin slot to
-               terminate failing searches.  If fill < size, it's
-               merely desirable, as dummies slow searches. */
-            assert(so->fill > so->used);
-            memcpy(small_copy, oldtable, sizeof(small_copy));
-            oldtable = small_copy;
-        }
-    }
-    else
+    // if (newsize == PySet_MINSIZE)
+    // {
+    //     /* A large table is shrinking, or we can't get any smaller. */
+    //     newtable = so->smalltable;
+    //     if (newtable == oldtable)
+    //     {
+    //         if (so->dk_usable == so->used)
+    //         {
+    //             /* No dummies, so no point doing anything. */
+    //             return 0;
+    //         }
+    //         /* We're not going to resize it, but rebuild the
+    //            table anyway to purge old dummy entries.
+    //            Subtle:  This is *necessary* if fill==size,
+    //            as set_lookkey needs at least one virgin slot to
+    //            terminate failing searches.  If fill < size, it's
+    //            merely desirable, as dummies slow searches. */
+    //         assert(so->dk_usable > so->used);
+    //         memcpy(small_copy, oldtable, sizeof(small_copy));
+    //         oldtable = small_copy;
+    //     }
+    // }
+    // else
     {
         newtable = PyMem_NEW(qdsetentry, newsize);
         if (newtable == NULL)
@@ -293,13 +293,13 @@ set_table_resize(QdPySetObject *so, Py_ssize_t minused)
     /* Make the set empty, using the new table. */
     assert(newtable != oldtable);
     memset(newtable, 0, sizeof(qdsetentry) * newsize);
-    so->mask = newsize - 1;
+    // so->mask = newsize - 1;
     so->table = newtable;
 
     /* Copy the data over; this is refcount-neutral for active entries;
        dummy entries aren't copied over, of course */
-    newmask = (size_t)so->mask;
-    if (so->fill == so->used)
+    newmask = (size_t)DK_MASK(so);
+    if (so->dk_usable == so->used)
     {
         for (entry = oldtable; entry <= oldtable + oldmask; entry++)
         {
@@ -311,7 +311,7 @@ set_table_resize(QdPySetObject *so, Py_ssize_t minused)
     }
     else
     {
-        so->fill = so->used;
+        so->dk_usable = so->used;
         for (entry = oldtable; entry <= oldtable + oldmask; entry++)
         {
             if (entry->key != NULL && entry->key != dummy)
@@ -407,11 +407,11 @@ set_discard_key(QdPySetObject *so, PyObject *key)
 static void
 set_empty_to_minsize(QdPySetObject *so)
 {
-    memset(so->smalltable, 0, sizeof(so->smalltable));
-    so->fill = 0;
+    // memset(so->smalltable, 0, sizeof(so->smalltable));
+    so->dk_usable = 0;
     so->used = 0;
-    so->mask = PySet_MINSIZE - 1;
-    so->table = so->smalltable;
+    // so->mask = PySet_MINSIZE - 1;
+    // so->table = so->smalltable;
     so->hash = -1;
 }
 
@@ -420,9 +420,9 @@ set_clear_internal(QdPySetObject *so)
 {
     qdsetentry *entry;
     qdsetentry *table = so->table;
-    Py_ssize_t fill = so->fill;
+    Py_ssize_t fill = so->dk_usable;
     Py_ssize_t used = so->used;
-    int table_is_malloced = table != so->smalltable;
+    int table_is_malloced = 1; //table != so->smalltable;
     qdsetentry small_copy[PySet_MINSIZE];
 
     assert(PyAnySet_Check(so));
@@ -490,7 +490,7 @@ set_next(QdPySetObject *so, Py_ssize_t *pos_ptr, qdsetentry **entry_ptr)
     assert(PyAnySet_Check(so));
     i = *pos_ptr;
     assert(i >= 0);
-    mask = so->mask;
+    mask = DK_MASK(so);
     entry = &so->table[i];
     while (i <= mask && (entry->key == NULL || entry->key == dummy))
     {
@@ -513,8 +513,9 @@ set_dealloc(QdPySetObject *so)
 
     /* bpo-31095: UnTrack is needed before calling any callbacks */
     PyObject_GC_UnTrack(so);
-    Py_TRASHCAN_BEGIN(so, set_dealloc) if (so->weakreflist != NULL)
-        PyObject_ClearWeakRefs((PyObject *)so);
+    Py_TRASHCAN_BEGIN(so, set_dealloc)
+    // if (so->weakreflist != NULL)
+    //     PyObject_ClearWeakRefs((PyObject *)so);
 
     for (entry = so->table; used > 0; entry++)
     {
@@ -524,8 +525,8 @@ set_dealloc(QdPySetObject *so)
             Py_DECREF(entry->key);
         }
     }
-    if (so->table != so->smalltable)
-        PyMem_Free(so->table);
+    // if (so->table != so->smalltable)
+    PyMem_Free(so->table);
     Py_TYPE(so)->tp_free(so);
     Py_TRASHCAN_END
 }
@@ -603,7 +604,7 @@ set_merge(QdPySetObject *so, PyObject *otherset)
      * incrementally resizing as we insert new keys.  Expect
      * that there will be no (or few) overlapping keys.
      */
-    if ((so->fill + other->used) * 5 >= so->mask * 3)
+    if ((so->dk_usable + other->used) * 5 >= DK_MASK(so) * 3)
     {
         if (set_table_resize(so, (so->used + other->used) * 2) != 0)
             return -1;
@@ -613,9 +614,9 @@ set_merge(QdPySetObject *so, PyObject *otherset)
 
     /* If our table is empty, and both tables have the same size, and
        there are no dummies to eliminate, then just copy the pointers. */
-    if (so->fill == 0 && so->mask == other->mask && other->fill == other->used)
+    if (so->dk_usable == 0 && DK_MASK(so) == DK_MASK(other) && other->dk_usable == other->used)
     {
-        for (i = 0; i <= other->mask; i++, so_entry++, other_entry++)
+        for (i = 0; i <= DK_MASK(other); i++, so_entry++, other_entry++)
         {
             key = other_entry->key;
             if (key != NULL)
@@ -626,19 +627,19 @@ set_merge(QdPySetObject *so, PyObject *otherset)
                 so_entry->hash = other_entry->hash;
             }
         }
-        so->fill = other->fill;
+        so->dk_usable = other->dk_usable;
         so->used = other->used;
         return 0;
     }
 
     /* If our table is empty, we can use set_insert_clean() */
-    if (so->fill == 0)
+    if (so->dk_usable == 0)
     {
         qdsetentry *newtable = so->table;
-        size_t newmask = (size_t)so->mask;
-        so->fill = other->used;
+        size_t newmask = (size_t)DK_MASK(so);
+        so->dk_usable = other->used;
         so->used = other->used;
-        for (i = other->mask + 1; i > 0; i--, other_entry++)
+        for (i = DK_MASK(other) + 1; i > 0; i--, other_entry++)
         {
             key = other_entry->key;
             if (key != NULL && key != dummy)
@@ -651,7 +652,7 @@ set_merge(QdPySetObject *so, PyObject *otherset)
     }
 
     /* We can't assure there are no duplicates, so do normal insertions */
-    for (i = 0; i <= other->mask; i++)
+    for (i = 0; i <= DK_MASK(other); i++)
     {
         other_entry = &other->table[i];
         key = other_entry->key;
@@ -668,8 +669,8 @@ static PyObject *
 set_pop(QdPySetObject *so, PyObject *Py_UNUSED(ignored))
 {
     /* Make sure the search finger is in bounds */
-    qdsetentry *entry = so->table + (so->finger & so->mask);
-    qdsetentry *limit = so->table + so->mask;
+    qdsetentry *entry = so->table + (DK_MASK(so));
+    qdsetentry *limit = so->table + DK_MASK(so);
     PyObject *key;
 
     if (so->used == 0)
@@ -687,7 +688,7 @@ set_pop(QdPySetObject *so, PyObject *Py_UNUSED(ignored))
     entry->key = dummy;
     entry->hash = -1;
     so->used--;
-    so->finger = entry - so->table + 1; /* next place to start */
+    // so->finger = entry - so->table + 1; /* next place to start */
     return key;
 }
 
@@ -743,15 +744,15 @@ frozenset_hash(PyObject *self)
        branches that would arise when trying to exclude null and dummy
        entries on every iteration. */
 
-    for (entry = so->table; entry <= &so->table[so->mask]; entry++)
+    for (entry = so->table; entry <= &so->table[DK_MASK(so)]; entry++)
         hash ^= _shuffle_bits(entry->hash);
 
     /* Remove the effect of an odd number of NULL entries */
-    if ((so->mask + 1 - so->fill) & 1)
+    if ((DK_MASK(so) + 1 - so->dk_usable) & 1)
         hash ^= _shuffle_bits(0);
 
     /* Remove the effect of an odd number of dummy entries */
-    if ((so->fill - so->used) & 1)
+    if ((so->dk_usable - so->used) & 1)
         hash ^= _shuffle_bits(-1);
 
     /* Factor in the number of active entries */
@@ -857,7 +858,7 @@ static PyObject *setiter_iternext(setiterobject *si)
     i = si->si_pos;
     assert(i >= 0);
     entry = so->table;
-    mask = so->mask;
+    mask = DK_MASK(so);
     while (i <= mask && (entry[i].key == NULL || entry[i].key == dummy))
         i++;
     si->si_pos = i + 1;
@@ -942,7 +943,7 @@ set_update_internal(QdPySetObject *so, PyObject *other)
          */
         if (dictsize < 0)
             return -1;
-        if ((so->fill + dictsize) * 5 >= so->mask * 3)
+        if ((so->dk_usable + dictsize) * 5 >= DK_MASK(so) * 3)
         {
             if (set_table_resize(so, (so->used + dictsize) * 2) != 0)
                 return -1;
@@ -1008,13 +1009,13 @@ make_new_set(PyTypeObject *type, PyObject *iterable)
     if (so == NULL)
         return NULL;
 
-    so->fill = 0;
+    so->dk_usable = 0;
     so->used = 0;
-    so->mask = PySet_MINSIZE - 1;
-    so->table = so->smalltable;
+    // so->mask = PySet_MINSIZE - 1;
+    // so->table = so->smalltable;
     so->hash = -1;
-    so->finger = 0;
-    so->weakreflist = NULL;
+    // so->finger = 0;
+    // so->weakreflist = NULL;
 
     if (iterable != NULL)
     {
@@ -1120,33 +1121,33 @@ set_swap_bodies(QdPySetObject *a, QdPySetObject *b)
 {
     Py_ssize_t t;
     qdsetentry *u;
-    qdsetentry tab[PySet_MINSIZE];
+    // qdsetentry tab[PySet_MINSIZE];
     Py_hash_t h;
 
-    t = a->fill;
-    a->fill = b->fill;
-    b->fill = t;
+    t = a->dk_usable;
+    a->dk_usable = b->dk_usable;
+    b->dk_usable = t;
     t = a->used;
     a->used = b->used;
     b->used = t;
-    t = a->mask;
-    a->mask = b->mask;
-    b->mask = t;
+    // t = a->mask;
+    // a->mask = b->mask;
+    // b->mask = t;
 
     u = a->table;
-    if (a->table == a->smalltable)
-        u = b->smalltable;
+    // if (a->table == a->smalltable)
+    //     u = b->smalltable;
     a->table = b->table;
-    if (b->table == b->smalltable)
-        a->table = a->smalltable;
+    // if (b->table == b->smalltable)
+    //     a->table = a->smalltable;
     b->table = u;
 
-    if (a->table == a->smalltable || b->table == b->smalltable)
-    {
-        memcpy(tab, a->smalltable, sizeof(tab));
-        memcpy(a->smalltable, b->smalltable, sizeof(tab));
-        memcpy(b->smalltable, tab, sizeof(tab));
-    }
+    // if (a->table == a->smalltable || b->table == b->smalltable)
+    // {
+    //     memcpy(tab, a->smalltable, sizeof(tab));
+    //     memcpy(a->smalltable, b->smalltable, sizeof(tab));
+    //     memcpy(b->smalltable, tab, sizeof(tab));
+    // }
 
     if (PyType_IsSubtype(Py_TYPE(a), &PyFrozenSet_Type) &&
         PyType_IsSubtype(Py_TYPE(b), &PyFrozenSet_Type))
@@ -1563,7 +1564,7 @@ set_difference_update_internal(QdPySetObject *so, PyObject *other)
             return -1;
     }
     /* If more than 1/4th are dummies, then resize them away. */
-    if ((size_t)(so->fill - so->used) <= (size_t)so->mask / 4)
+    if ((size_t)(so->dk_usable - so->used) <= (size_t)DK_MASK(so) / 4)
         return 0;
     return set_table_resize(so, so->used > 50000 ? so->used * 2 : so->used * 4);
 }
@@ -2132,8 +2133,8 @@ set_sizeof(QdPySetObject *so, PyObject *Py_UNUSED(ignored))
     Py_ssize_t res;
 
     res = _PyObject_SIZE(Py_TYPE(so));
-    if (so->table != so->smalltable)
-        res = res + (so->mask + 1) * sizeof(qdsetentry);
+    // if (so->table != so->smalltable)
+    res = res + (DK_MASK(so) + 1) * sizeof(qdsetentry);
     return PyLong_FromSsize_t(res);
 }
 
@@ -2147,7 +2148,7 @@ set_init(QdPySetObject *self, PyObject *args, PyObject *kwds)
         return -1;
     if (!PyArg_UnpackTuple(args, Py_TYPE(self)->tp_name, 0, 1, &iterable))
         return -1;
-    if (self->fill)
+    if (self->dk_usable)
         set_clear_internal(self);
     self->hash = -1;
     if (iterable == NULL)
@@ -2314,7 +2315,8 @@ PyTypeObject PySet_Type = {
     (traverseproc)set_traverse,         /* tp_traverse */
     (inquiry)set_clear_internal,        /* tp_clear */
     (richcmpfunc)set_richcompare,       /* tp_richcompare */
-    offsetof(QdPySetObject, weakreflist), /* tp_weaklistoffset */
+    // offsetof(QdPySetObject, weakreflist), /* tp_weaklistoffset */
+    0, /* tp_weaklistoffset */
     (getiterfunc)set_iter,              /* tp_iter */
     0,                                  /* tp_iternext */
     set_methods,                        /* tp_methods */
@@ -2413,7 +2415,7 @@ PyTypeObject PyFrozenSet_Type = {
     (traverseproc)set_traverse,         /* tp_traverse */
     (inquiry)set_clear_internal,        /* tp_clear */
     (richcmpfunc)set_richcompare,       /* tp_richcompare */
-    offsetof(QdPySetObject, weakreflist), /* tp_weaklistoffset */
+    0, /* tp_weaklistoffset */
     (getiterfunc)set_iter,              /* tp_iter */
     0,                                  /* tp_iternext */
     frozenset_methods,                  /* tp_methods */
