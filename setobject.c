@@ -825,7 +825,8 @@ setiter_reduce(setiterobject *si, PyObject *Py_UNUSED(ignored))
         return NULL;
     }
     // FIXME:
-    // return Py_BuildValue("N(N)", _PyEval_GetBuiltin(&Py_ID(iter)), list);
+    // return Py_BuildValue("N(N)", _PyEval_GetBuiltin(&_Py_ID(iter)), list);
+    return NULL;
 }
 
 PyDoc_STRVAR(reduce_doc, "Return state information for pickling.");
