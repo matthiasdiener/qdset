@@ -2290,7 +2290,7 @@ set(iterable) -> new set object\n\
 Build an unordered collection of unique elements.");
 
 PyTypeObject PySet_Type = {
-    PyVarObject_HEAD_INIT(&PyType_Type, 0) "set", /* tp_name */
+    PyVarObject_HEAD_INIT(&PyType_Type, 0) "qdset", /* tp_name */
     sizeof(QdPySetObject),                          /* tp_basicsize */
     0,                                            /* tp_itemsize */
     /* methods */
@@ -2390,7 +2390,7 @@ frozenset(iterable) -> frozenset object\n\
 Build an immutable unordered collection of unique elements.");
 
 PyTypeObject PyFrozenSet_Type = {
-    PyVarObject_HEAD_INIT(&PyType_Type, 0) "frozenset", /* tp_name */
+    PyVarObject_HEAD_INIT(&PyType_Type, 0) "qdfrozenset", /* tp_name */
     sizeof(QdPySetObject),                                /* tp_basicsize */
     0,                                                  /* tp_itemsize */
     /* methods */
@@ -2744,7 +2744,7 @@ PyInit_qdset(void)
         return NULL;
 
     Py_INCREF(&PySet_Type);
-    if (PyModule_AddObject(m, "set", (PyObject *)&PySet_Type) < 0)
+    if (PyModule_AddObject(m, "qdset", (PyObject *)&PySet_Type) < 0)
     {
         printf("error\n");
         Py_DECREF(&PySet_Type);
@@ -2753,7 +2753,7 @@ PyInit_qdset(void)
     }
 
     Py_INCREF(&PyFrozenSet_Type);
-    if (PyModule_AddObject(m, "frozenset", (PyObject *)&PyFrozenSet_Type) < 0)
+    if (PyModule_AddObject(m, "qdfrozenset", (PyObject *)&PyFrozenSet_Type) < 0)
     {
         printf("error\n");
         Py_DECREF(&PyFrozenSet_Type);

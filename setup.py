@@ -8,6 +8,7 @@ def main():
           author_email="mdiener@illinois.edu",
           ext_modules=[Extension("qdset", ["setobject.c"],
                                  extra_compile_args=["-g"],
+                                 extra_link_args=["-g"],
                                  depends=["setobject.h"])
                        ],
           )
